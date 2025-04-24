@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 using Delivery_Management.Models;
 using Delivery_Management.Services;
 using Delivery_Management.Interfaces;
+using System.Text.Json;
 
 namespace Delivery_Management.Controllers
 {
@@ -10,9 +11,15 @@ namespace Delivery_Management.Controllers
     public class DeliveryAssignmentController : ControllerBase
     {
         private readonly IDeliveryAssignmentService _deliveryAssignmentService;
+        private readonly IDriverService _driverService;
 
-        public DeliveryAssignmentController(IDeliveryAssignmentService deliveryAssignmentService) =>
+        public DeliveryAssignmentController(
+            IDeliveryAssignmentService deliveryAssignmentService,
+            IDriverService driverService)
+        {
             _deliveryAssignmentService = deliveryAssignmentService;
+            _driverService = driverService;
+        }
 
         [HttpGet]
         public async Task<List<DeliveryAssignment>> Get() =>
@@ -38,8 +45,31 @@ namespace Delivery_Management.Controllers
         [HttpPost]
         public async Task<IActionResult> Post([FromBody] DeliveryAssignment newDeliveryAssignment)
         {
-            // Remove the ID if it exists, let MongoDB generate it
-            newDeliveryAssignment.Id = null;
+            // Log the received data
+            Console.WriteLine($"Received delivery assignment: {JsonSerializer.Serialize(newDeliveryAssignment)}");
+
+            // Validate OrderIds
+            if (newDeliveryAssignment.OrderIds == null || !newDeliveryAssignment.OrderIds.Any())
+            {
+                return BadRequest("At least one order ID must be provided");
+            }
+
+            // Validate driver exists
+            var driver = await _driverService.GetAsync(newDeliveryAssignment.DriverId);
+            if (driver is null)
+            {
+                return BadRequest("Driver not found");
+            }
+
+            // Initialize OrderIds if null
+            newDeliveryAssignment.OrderIds ??= new List<string>();
+
+            // Set default values
+            newDeliveryAssignment.Status = "Pending";
+            newDeliveryAssignment.AssignedDate = DateTime.UtcNow;
+
+            // Log the data being sent to service
+            Console.WriteLine($"Sending to service: {JsonSerializer.Serialize(newDeliveryAssignment)}");
             
             await _deliveryAssignmentService.CreateAsync(newDeliveryAssignment);
 
@@ -54,6 +84,12 @@ namespace Delivery_Management.Controllers
             if (deliveryAssignment is null)
             {
                 return NotFound();
+            }
+
+            // Validate OrderIds
+            if (updatedDeliveryAssignment.OrderIds == null || !updatedDeliveryAssignment.OrderIds.Any())
+            {
+                return BadRequest("At least one order ID must be provided");
             }
 
             updatedDeliveryAssignment.Id = deliveryAssignment.Id;
