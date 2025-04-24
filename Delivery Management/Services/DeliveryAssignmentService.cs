@@ -3,6 +3,8 @@ using Delivery_Management.Interfaces;
 using Microsoft.Extensions.Options;
 using MongoDB.Driver;
 using System.Diagnostics;
+using System.Text.Json;
+using MongoDB.Bson;
 
 namespace Delivery_Management.Services
 {
@@ -34,6 +36,12 @@ namespace Delivery_Management.Services
         {
             try
             {
+                // Validate OrderIds
+                if (newDeliveryAssignment.OrderIds == null || !newDeliveryAssignment.OrderIds.Any())
+                {
+                    throw new Exception("At least one order ID must be provided");
+                }
+
                 // Get driver's email
                 var driver = await _driverService.GetAsync(newDeliveryAssignment.DriverId);
                 if (driver == null)
@@ -42,16 +50,27 @@ namespace Delivery_Management.Services
                 }
 
                 Debug.WriteLine($"Found driver: {driver.Name} with email: {driver.Email}");
+                Debug.WriteLine($"Creating delivery assignment with {newDeliveryAssignment.OrderIds.Count} orders");
+
+                // Ensure OrderIds is initialized
+                newDeliveryAssignment.OrderIds = newDeliveryAssignment.OrderIds ?? new List<string>();
+                
+                // Set default values
+                newDeliveryAssignment.Status = "Pending";
+                newDeliveryAssignment.AssignedDate = DateTime.UtcNow;
+
+                // Log the data being saved
+                Debug.WriteLine($"Saving delivery assignment: {JsonSerializer.Serialize(newDeliveryAssignment)}");
 
                 await _deliveryAssignmentCollection.InsertOneAsync(newDeliveryAssignment);
 
                 // Send notification to driver
                 var notification = new Notification
                 {
-                    UserId = driver.Email, // Use driver's email
+                    UserId = driver.Email,
                     Type = "Email",
                     Title = "New Delivery Assignment",
-                    Message = $"Dear {driver.Name},\n\nYou have been assigned a new delivery.\n\nDelivery ID: {newDeliveryAssignment.DeliveryId}\nStatus: {newDeliveryAssignment.Status}\nAssigned Date: {newDeliveryAssignment.AssignedDate}\nEstimated Delivery Time: {newDeliveryAssignment.EstimatedDeliveryTime}\n\nBest regards,\nDelivery Management Team",
+                    Message = $"Dear {driver.Name},\n\nYou have been assigned a new delivery.\n\nDelivery ID: {newDeliveryAssignment.DeliveryId}\nOrders: {string.Join(", ", newDeliveryAssignment.OrderIds)}\nStatus: {newDeliveryAssignment.Status}\nAssigned Date: {newDeliveryAssignment.AssignedDate}\nEstimated Delivery Time: {newDeliveryAssignment.EstimatedDeliveryTime}\n\nBest regards,\nDelivery Management Team",
                     DeliveryId = newDeliveryAssignment.DeliveryId
                 };
 
@@ -72,6 +91,12 @@ namespace Delivery_Management.Services
             var existingAssignment = await GetAsync(id);
             if (existingAssignment != null)
             {
+                // Validate OrderIds
+                if (updatedDeliveryAssignment.OrderIds == null || !updatedDeliveryAssignment.OrderIds.Any())
+                {
+                    throw new Exception("At least one order ID must be provided");
+                }
+
                 // Get driver's email
                 var driver = await _driverService.GetAsync(updatedDeliveryAssignment.DriverId);
                 if (driver == null)
@@ -80,6 +105,10 @@ namespace Delivery_Management.Services
                 }
 
                 Debug.WriteLine($"Found driver for update: {driver.Name} with email: {driver.Email}");
+                Debug.WriteLine($"Updating delivery assignment with {updatedDeliveryAssignment.OrderIds.Count} orders");
+
+                // Set the ID from the existing assignment
+                updatedDeliveryAssignment.Id = id;
 
                 // Check if status has changed
                 if (existingAssignment.Status != updatedDeliveryAssignment.Status)
@@ -87,10 +116,10 @@ namespace Delivery_Management.Services
                     // Send notification about status change
                     var notification = new Notification
                     {
-                        UserId = driver.Email, // Use driver's email
+                        UserId = driver.Email,
                         Type = "Email",
                         Title = "Delivery Status Updated",
-                        Message = $"Dear {driver.Name},\n\nThe status of your delivery has been updated.\n\nDelivery ID: {updatedDeliveryAssignment.DeliveryId}\nNew Status: {updatedDeliveryAssignment.Status}\n\nBest regards,\nDelivery Management Team",
+                        Message = $"Dear {driver.Name},\n\nThe status of your delivery has been updated.\n\nDelivery ID: {updatedDeliveryAssignment.DeliveryId}\nOrders: {string.Join(", ", updatedDeliveryAssignment.OrderIds)}\nNew Status: {updatedDeliveryAssignment.Status}\n\nBest regards,\nDelivery Management Team",
                         DeliveryId = updatedDeliveryAssignment.DeliveryId
                     };
 
@@ -98,9 +127,14 @@ namespace Delivery_Management.Services
                     await _notificationService.CreateAsync(notification);
                     Debug.WriteLine("Status update notification sent successfully");
                 }
-            }
 
-            await _deliveryAssignmentCollection.ReplaceOneAsync(x => x.Id == id, updatedDeliveryAssignment);
+                // Update the document
+                await _deliveryAssignmentCollection.ReplaceOneAsync(x => x.Id == id, updatedDeliveryAssignment);
+            }
+            else
+            {
+                throw new Exception($"Delivery assignment with ID {id} not found");
+            }
         }
 
         public async Task RemoveAsync(string id)
@@ -117,10 +151,10 @@ namespace Delivery_Management.Services
                     // Send notification about cancellation
                     var notification = new Notification
                     {
-                        UserId = driver.Email, // Use driver's email
+                        UserId = driver.Email,
                         Type = "Email",
                         Title = "Delivery Assignment Cancelled",
-                        Message = $"Dear {driver.Name},\n\nYour delivery assignment has been cancelled.\n\nDelivery ID: {assignment.DeliveryId}\n\nBest regards,\nDelivery Management Team",
+                        Message = $"Dear {driver.Name},\n\nYour delivery assignment has been cancelled.\n\nDelivery ID: {assignment.DeliveryId}\nOrders: {string.Join(", ", assignment.OrderIds)}\n\nBest regards,\nDelivery Management Team",
                         DeliveryId = assignment.DeliveryId
                     };
 
@@ -135,5 +169,5 @@ namespace Delivery_Management.Services
 
         public async Task<List<DeliveryAssignment>> GetByDriverIdAsync(string driverId) =>
             await _deliveryAssignmentCollection.Find(x => x.DriverId == driverId).ToListAsync();
-    }
+      }
 } 
